@@ -6,4 +6,6 @@ COPY . .
 
 RUN pip install --no-cache-dir -r requirements.txt
 
+HEALTHCHECK NONE
+
 CMD ["python", "main.py"]
