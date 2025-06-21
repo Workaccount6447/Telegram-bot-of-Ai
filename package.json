@@ -1,0 +1,14 @@
+
+{
+  "name": "puter-server",
+  "version": "1.0.0",
+  "main": "puter_server.js",
+  "scripts": {
+    "start": "node puter_server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
+    "jsdom": "^22.1.0"
+  }
+}
