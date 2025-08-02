@@ -4,8 +4,8 @@ import json
 import os
 
 # === CONFIG ===
-BOT_TOKEN = "YOUR_BOT_TOKEN"  # Replace this
-OWNER_ID = 123456789          # Replace with your Telegram user ID
+BOT_TOKEN = "8009237833:AAFn0FntFqrX9dna1R0Dv9UZakO-aMRRatE"  # Replace this
+OWNER_ID = 7588665244          # Replace with your Telegram user ID
 DATA_FILE = "userdata.json"
 
 # === DATA SETUP ===
