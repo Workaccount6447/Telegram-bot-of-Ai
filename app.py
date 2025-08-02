@@ -3,16 +3,15 @@ import requests
 
 app = Flask(__name__)
 
-# 🔐 Admin password
-ADMIN_SECRET = "ayusar@2010"
+# Owner password
+OWNER_SECRET = "ayusar@2010"
 
-# ✅ API users with usage tracking (stored in memory)
+# Store user data: usage count and active status
 USERS = {
-    "Amazonpublicpaidbotforpersonaluse2010": {"usage": 0},
-    "Dealsduniya": {"usage": 0}
+    "affiliatesikution": {"usage": 12, "active": True}
 }
 
-# ✅ Your Amazon SiteStripe request headers (REPLACE values below with valid cookies/token!)
+# Amazon SiteStripe session headers
 HEADERS = {
     "user-agent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Mobile Safari/537.36",
     "cookie": (
@@ -28,53 +27,87 @@ HEADERS = {
     )
 }
 
-@app.route("/api")
-def shorten_amazon():
-    apikey = request.args.get("api")
-    long_url = request.args.get("link")
-
-    if not apikey or apikey not in USERS:
-        return jsonify({"error": "❌ Invalid API key"}), 403
-
-    if not long_url or "amazon" not in long_url:
-        return jsonify({"error": "❌ Missing or invalid Amazon link"}), 400
-
+def get_amazon_short_link(long_url):
     params = {
         "longUrl": long_url,
         "marketplaceId": "44571"
     }
-
-    res = requests.get("https://www.amazon.in/associates/sitestripe/getShortUrl", headers=HEADERS, params=params)
-
-    if res.status_code == 200 and res.json().get("shortUrl"):
-        USERS[apikey]["usage"] += 1
-        return res.json()["shortUrl"]
+    response = requests.get("https://www.amazon.in/associates/sitestripe/getShortUrl", headers=HEADERS, params=params)
+    if response.status_code == 200:
+        return response.json().get("shortUrl", "❌ Could not parse short URL")
     else:
-        return f"❌ Amazon Error: {res.status_code}"
+        return f"❌ Failed: {response.status_code}"
+
+# ========== ROUTES ==========
+
+@app.route("/")
+def home():
+    return "✅ Amazon Shortner API is live"
+
+@app.route("/api")
+def short_link():
+    user = request.args.get("api")
+    long_url = request.args.get("link")
+
+    if not user or not long_url:
+        return "❌ Missing parameters"
+
+    user_data = USERS.get(user)
+    if not user_data:
+        return "❌ Invalid API key"
+
+    if not user_data.get("active", True):
+        return "⛔ Your API access is disabled. Contact support."
+
+    short_url = get_amazon_short_link(long_url)
+    USERS[user]["usage"] += 1
+    return short_url
 
 @app.route("/adduser")
 def add_user():
     secret = request.args.get("secret")
-    new_user = request.args.get("user")
+    user = request.args.get("user")
 
-    if secret != ADMIN_SECRET:
+    if secret != OWNER_SECRET:
         return "❌ Unauthorized"
 
-    if not new_user:
-        return "❌ Provide ?user=... in URL"
+    USERS[user] = {"usage": 0, "active": True}
+    return f"✅ User '{user}' added successfully!"
 
-    if new_user in USERS:
-        return f"⚠️ User '{new_user}' already exists."
+@app.route("/blockuser")
+def block_user():
+    secret = request.args.get("secret")
+    user = request.args.get("user")
 
-    USERS[new_user] = {"usage": 0}
-    return f"✅ User '{new_user}' added successfully!"
+    if secret != OWNER_SECRET:
+        return "❌ Unauthorized"
+    if user not in USERS:
+        return f"❌ User {user} not found."
+
+    USERS[user]["active"] = False
+    return f"⛔ User '{user}' access has been disabled."
+
+@app.route("/unblockuser")
+def unblock_user():
+    secret = request.args.get("secret")
+    user = request.args.get("user")
+
+    if secret != OWNER_SECRET:
+        return "❌ Unauthorized"
+    if user not in USERS:
+        return f"❌ User {user} not found."
+
+    USERS[user]["active"] = True
+    return f"✅ User '{user}' access re-enabled."
 
 @app.route("/stats")
-def usage_stats():
+def view_stats():
     secret = request.args.get("secret")
-    if secret != ADMIN_SECRET:
-        return "❌ Unauthorized to view usage."
+    if secret != OWNER_SECRET:
+        return "❌ Unauthorized"
+
     return jsonify(USERS)
 
+# ========== START ==========
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=7860)
