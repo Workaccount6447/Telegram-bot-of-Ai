@@ -1,105 +1,94 @@
 from flask import Flask, request, jsonify
-import requests
 import urllib.parse
-import datetime
-from supabase import create_client, Client
+import requests
+from pymongo import MongoClient
+from datetime import datetime
 
 app = Flask(__name__)
 
-# ✅ Amazon SiteStripe Cookies & Headers (paste your values here)
+# MongoDB connection
+client = MongoClient("mongodb+srv://telegrambot:ayusar@2010@cluster0.mongodb.net/?retryWrites=true&w=majority")
+db = client['amazon_shortener']
+users_col = db['users']
+
+# SiteStripe cookies and headers
 COOKIES = (
     "session-id=258-2488057-5180660; "
     "i18n-prefs=INR; lc-acbin=en_IN; ubid-acbin=261-4559508-6367401; "
     "at-acbin=Atza|IwEBIEbJvF6zMWwxVJcwM1cBBLghJa0IfhJpu6guwxQJVjiDQa_k6d-...; "
     'sess-at-acbin="h+U5YvpWslcHY6OcLVwtxT4rDLhKz7Xk98Y4GvGZtXc="; '
-    "sst-acbin=Sst1|...; "
-    "session-token=92JP3YPrXa2aM7UC3MVeNEU2hwg0UUC0SMwey9/...;"
+    "sst-acbin=Sst1|PQFv1S46auCLoPSSrLhkPOtTCdR9ElFfR_jOzLlcc1qPpo7d4sk...; "
+    "session-token=92JP3YPrXa2aM7UC3MVeNEU2hwg0UUC0SMwey9/Rfj6zndzFtanm3...;"
 )
 
 HEADERS = {
-    "User-Agent": "Mozilla/5.0",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
     "Accept": "application/json, text/javascript, */*; q=0.01",
     "Accept-Language": "en-US,en;q=0.9",
     "Cookie": COOKIES
 }
 
-# ✅ Supabase setup
-SUPABASE_URL = "https://qvmnnwilzcqmqroqpgll.supabase.co"
-SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF2bW5ud2lsemNxbXFyb3FwZ2xsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTQyMzMzMjYsImV4cCI6MjA2OTgwOTMyNn0.05XPEDCX1xsn_qa92joHMSbLQPlXkoW-Dwi79KGJG_k"
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-
+# Owner secret for admin actions
 OWNER_SECRET = "ayusar@2010"
 
-# ✅ Main API route
-@app.route("/api")
+@app.route('/api')
 def shorten_amazon_link():
-    user = request.args.get("api")
-    long_url = request.args.get("link")
+    user_key = request.args.get('api')
+    amazon_link = request.args.get('link')
 
-    if not user or not long_url:
-        return "❌ Missing api or link", 400
+    if not user_key or not amazon_link or "amazon." not in amazon_link:
+        return "❌ Invalid parameters", 400
 
-    if "amazon." not in long_url:
-        return "❌ Invalid Amazon link", 400
-
-    # Check if user is allowed
-    user_data = supabase.table("users").select("*").eq("api_key", user).execute().data
-    if not user_data:
+    user = users_col.find_one({"api_key": user_key})
+    if not user:
         return "❌ Invalid API key", 403
-    if not user_data[0]["allowed"]:
-        return "❌ Access denied", 403
 
-    # Shorten link
-    encoded = urllib.parse.quote_plus(long_url)
+    # Shorten Amazon link
+    encoded = urllib.parse.quote_plus(amazon_link)
     shortener_url = f"https://www.amazon.in/associates/sitestripe/getShortUrl?longUrl={encoded}&marketplaceId=44571"
     r = requests.get(shortener_url, headers=HEADERS)
 
     if r.status_code == 200:
-        short_url = r.json().get("shortUrl")
-        # Update usage count
-        supabase.table("users").update({"usage_count": user_data[0]["usage_count"] + 1}).eq("api_key", user).execute()
-        return short_url or "❌ Could not extract short URL"
+        short_url = r.json().get("shortUrl", None)
+        if short_url:
+            users_col.update_one(
+                {"api_key": user_key},
+                {"$inc": {"requests": 1}, "$set": {"last_used": datetime.utcnow()}}
+            )
+            return short_url
+        return "❌ Failed to extract short URL", 500
     else:
-        return f"❌ Error {r.status_code}", r.status_code
+        return f"❌ API error {r.status_code}", r.status_code
 
-# ✅ Admin commands
-@app.route("/adduser")
+@app.route('/adduser')
 def add_user():
     secret = request.args.get("secret")
     user = request.args.get("user")
-    if secret != OWNER_SECRET:
-        return "❌ Unauthorized", 403
-    if not user:
-        return "❌ Missing user", 400
-    supabase.table("users").upsert({"api_key": user, "allowed": True, "usage_count": 0}).execute()
-    return f"✅ User {user} added"
+    if secret != OWNER_SECRET or not user:
+        return "❌ Unauthorized or missing user", 403
 
-@app.route("/banuser")
-def ban_user():
-    secret = request.args.get("secret")
-    user = request.args.get("user")
-    if secret != OWNER_SECRET:
-        return "❌ Unauthorized", 403
-    supabase.table("users").update({"allowed": False}).eq("api_key", user).execute()
-    return f"❌ User {user} banned"
+    users_col.update_one(
+        {"api_key": user},
+        {"$setOnInsert": {"requests": 0, "created": datetime.utcnow()}},
+        upsert=True
+    )
+    return f"✅ API access granted to: {user}"
 
-@app.route("/unbanuser")
-def unban_user():
-    secret = request.args.get("secret")
-    user = request.args.get("user")
-    if secret != OWNER_SECRET:
-        return "❌ Unauthorized", 403
-    supabase.table("users").update({"allowed": True}).eq("api_key", user).execute()
-    return f"✅ User {user} unbanned"
-
-@app.route("/stats")
+@app.route('/stats')
 def stats():
     secret = request.args.get("secret")
     if secret != OWNER_SECRET:
         return "❌ Unauthorized", 403
-    data = supabase.table("users").select("*").execute().data
-    return jsonify(data)
+
+    all_users = users_col.find()
+    response = []
+    for user in all_users:
+        response.append({
+            "api_key": user["api_key"],
+            "requests": user.get("requests", 0),
+            "last_used": user.get("last_used", "Never")
+        })
+    return jsonify(response)
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=7860)
-    
