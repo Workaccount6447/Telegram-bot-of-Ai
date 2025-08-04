@@ -1,24 +1,29 @@
-from flask import Flask, request, jsonify
-import urllib.parse
+from flask import Flask, request
 import requests
+import urllib.parse
 from pymongo import MongoClient
 from datetime import datetime
+from urllib.parse import quote_plus
 
+# Flask app
 app = Flask(__name__)
 
 # MongoDB connection
-client = MongoClient("mongodb+srv://telegrambot:ayusar@2010@cluster0.mongodb.net/?retryWrites=true&w=majority")
-db = client['amazon_shortener']
-users_col = db['users']
+username = quote_plus("telegrambot")
+password = quote_plus("ayusar@2010")
+mongo_uri = f"mongodb+srv://{username}:{password}@cluster0.mongodb.net/?retryWrites=true&w=majority"
+client = MongoClient(mongo_uri)
+db = client["amazon_shortener"]
+users_col = db["users"]
 
-# SiteStripe cookies and headers
+# Working SiteStripe cookies
 COOKIES = (
     "session-id=258-2488057-5180660; "
     "i18n-prefs=INR; lc-acbin=en_IN; ubid-acbin=261-4559508-6367401; "
-    "at-acbin=Atza|IwEBIEbJvF6zMWwxVJcwM1cBBLghJa0IfhJpu6guwxQJVjiDQa_k6d-...; "
+    "at-acbin=Atza|IwEBIEbJvF6zMWwxVJcwM1cBBLghJa0IfhJpu6guwxQJVji...; "
     'sess-at-acbin="h+U5YvpWslcHY6OcLVwtxT4rDLhKz7Xk98Y4GvGZtXc="; '
-    "sst-acbin=Sst1|PQFv1S46auCLoPSSrLhkPOtTCdR9ElFfR_jOzLlcc1qPpo7d4sk...; "
-    "session-token=92JP3YPrXa2aM7UC3MVeNEU2hwg0UUC0SMwey9/Rfj6zndzFtanm3...;"
+    "sst-acbin=Sst1|PQFv1S46auCLoPSSrLhkPOtTCdR9ElFfR_jOzLlcc1qPpo7...; "
+    "session-token=92JP3YPrXa2aM7UC3MVeNEU2hwg0UUC0SMwey9/Rfj6zndz...;"
 )
 
 HEADERS = {
@@ -28,67 +33,59 @@ HEADERS = {
     "Cookie": COOKIES
 }
 
-# Owner secret for admin actions
-OWNER_SECRET = "ayusar@2010"
+OWNER_PASSWORD = "ayusar@2010"
 
-@app.route('/api')
-def shorten_amazon_link():
-    user_key = request.args.get('api')
-    amazon_link = request.args.get('link')
+@app.route("/")
+def index():
+    return "✅ Amazon Shortener API is Live"
 
-    if not user_key or not amazon_link or "amazon." not in amazon_link:
-        return "❌ Invalid parameters", 400
-
-    user = users_col.find_one({"api_key": user_key})
-    if not user:
-        return "❌ Invalid API key", 403
-
-    # Shorten Amazon link
-    encoded = urllib.parse.quote_plus(amazon_link)
-    shortener_url = f"https://www.amazon.in/associates/sitestripe/getShortUrl?longUrl={encoded}&marketplaceId=44571"
-    r = requests.get(shortener_url, headers=HEADERS)
-
-    if r.status_code == 200:
-        short_url = r.json().get("shortUrl", None)
-        if short_url:
-            users_col.update_one(
-                {"api_key": user_key},
-                {"$inc": {"requests": 1}, "$set": {"last_used": datetime.utcnow()}}
-            )
-            return short_url
-        return "❌ Failed to extract short URL", 500
-    else:
-        return f"❌ API error {r.status_code}", r.status_code
-
-@app.route('/adduser')
+@app.route("/adduser")
 def add_user():
     secret = request.args.get("secret")
     user = request.args.get("user")
-    if secret != OWNER_SECRET or not user:
+    if secret != OWNER_PASSWORD or not user:
         return "❌ Unauthorized or missing user", 403
-
     users_col.update_one(
         {"api_key": user},
-        {"$setOnInsert": {"requests": 0, "created": datetime.utcnow()}},
+        {"$set": {"allowed": True, "usage": 0, "created_at": datetime.utcnow()}},
         upsert=True
     )
-    return f"✅ API access granted to: {user}"
+    return f"✅ User '{user}' added successfully"
 
-@app.route('/stats')
-def stats():
+@app.route("/api")
+def shorten_link():
+    api = request.args.get("api")
+    long_url = request.args.get("link")
+
+    if not api or not long_url:
+        return "❌ Missing parameters", 400
+
+    user = users_col.find_one({"api_key": api, "allowed": True})
+    if not user:
+        return "❌ Invalid or unauthorized API key", 403
+
+    if "amazon." not in long_url:
+        return "❌ Invalid Amazon link", 400
+
+    encoded = urllib.parse.quote_plus(long_url)
+    url = f"https://www.amazon.in/associates/sitestripe/getShortUrl?longUrl={encoded}&marketplaceId=44571"
+    r = requests.get(url, headers=HEADERS)
+
+    if r.status_code == 200:
+        short_url = r.json().get("shortUrl")
+        users_col.update_one({"api_key": api}, {"$inc": {"usage": 1}})
+        return short_url or "❌ Short URL not found"
+    else:
+        return f"❌ Error {r.status_code}", r.status_code
+
+@app.route("/stats")
+def get_stats():
     secret = request.args.get("secret")
-    if secret != OWNER_SECRET:
+    if secret != OWNER_PASSWORD:
         return "❌ Unauthorized", 403
 
-    all_users = users_col.find()
-    response = []
-    for user in all_users:
-        response.append({
-            "api_key": user["api_key"],
-            "requests": user.get("requests", 0),
-            "last_used": user.get("last_used", "Never")
-        })
-    return jsonify(response)
+    data = list(users_col.find({}, {"_id": 0}))
+    return {"users": data}
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=7860)
