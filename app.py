@@ -30,9 +30,9 @@ HEADERS = {
 
 def send_dm(text):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    return requests.post(url, data={"chat_id": OWNER_ID, "text": text}).json()
-
-def edit_dm(msg_id, new_text):
+    return requests.post(url, json={"chat_id": OWNER_ID, "text": text}).json()
+    
+    def edit_dm(msg_id, new_text):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/editMessageText"
     requests.post(url, data={"chat_id": OWNER_ID, "message_id": msg_id, "text": new_text})
 
