@@ -1,116 +1,121 @@
 from flask import Flask, request, jsonify
-from pymongo import MongoClient
-from pymongo.server_api import ServerApi
-from datetime import datetime, timedelta
-import urllib.parse
 import requests
-
-# MongoDB connection
-mongo_uri = "mongodb+srv://telegrambot:ayusar%402010@cluster0.kdocaah.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
-client = MongoClient(mongo_uri, server_api=ServerApi('1'))
-db = client["amazonshort"]
-users_col = db["users"]
-
-# Amazon SiteStripe Cookie (Already provided by you)
-COOKIES = (
-    "session-id=258-2488057-5180660; "
-    "i18n-prefs=INR; lc-acbin=en_IN; ubid-acbin=261-4559508-6367401; "
-    "at-acbin=Atza|IwEBIEbJvF6zMWwxVJcwM1cBBLghJa0IfhJpu6guwxQJVjiDQa_k6d-...; "
-    'sess-at-acbin="h+U5YvpWslcHY6OcLVwtxT4rDLhKz7Xk98Y4GvGZtXc="; '
-    "sst-acbin=Sst1|PQFv1S46auCLoPSSrLhkPOtTCdR9ElFfR_jOzLlcc1qPpo7d4sk...; "
-    "session-token=92JP3YPrXa2aM7UC3MVeNEU2hwg0UUC0SMwey9/Rfj6zndzFtanm3...;"
-)
-
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-    "Accept": "application/json, text/javascript, */*; q=0.01",
-    "Accept-Language": "en-US,en;q=0.9",
-    "Cookie": COOKIES
-}
+import time
+import json
 
 app = Flask(__name__)
 
+ADMIN_PASSWORD = "ayusar@2010"
+KVDB_BUCKET = "Rz199m1zbC8oEghG9br7Xx"
+
+# Constants
+KVDB_BASE = f"https://kvdb.io/{KVDB_BUCKET}"
+
+COOKIES = {
+    "session-id": "258-2488057-5180660",
+    "i18n-prefs": "INR",
+    "lc-acbin": "en_IN",
+    "ubid-acbin": "261-4559508-6367401",
+    "at-acbin": "Atza|IwEBIEbJvF6zMWwxVJcwM1cBBLghJa0IfhJpu6guwxQJVjiDQa_k6d-nTd1ewlINt1H717wsqcqhDsLfxZxMcOM26emvQ7eyM0EL0xjPfmPE6S4M3AImz7lEPXzp9OLOEhsASbBF9tLwmBsh9BZN1iW6eS8Mcg3BOAPFJ_hgIReqCW2w76NcI-YHZMF1iCRUV93S1zYKNPEV7uOWSKm6lFA-pwCpXSq7eyuvVIGXV8OydRSO3if46hr0RbZ0OCVZIQd5yUYnO1BR3wcoKiadvX0Te_eJ9l2dYcvEH1f6eShaietZUQ",
+    "sess-at-acbin": "h+U5YvpWslcHY6OcLVwtxT4rDLhKz7Xk98Y4GvGZtXc=",
+    "sst-acbin": "Sst1|PQFv1S46auCLoPSSrLhkPOtTCdR9ElFfR_jOzLlcc1qPpo7d4skHpI37UUs9hYJdUYvVhP2x8cSCBQ_JNnsSDobBdHXdErkDcdETcuEVbPdsa8AGWZopvv4KteadwAJBsRJ8TmcX6xQYaWROTsYv6VXUi3dAE_0nlVP1wMgWJrU8sX-8N98dee741VPb33OryrsdjSlUPOAzChZUblgGlZigMCjv-d8P3uDp1mmSBYpkQiRlLfCFEYJQVVIka6jrAQhjpgm1mGecd30s01IgKVUWl8BH94rcgS6sEJipsOQ82KY",
+    "session-id-time": "2082787201l",
+    "session-token": "92JP3YPrXa2aM7UC3MVeNEU2hwg0UUC0SMwey9/Rfj6zndzFtanm37h2rHWcB17jbLwYIdikWnh7ROHLvi2BZ0kUXu1Z2OA3weWO5yRkKCPvuDyWisI0QGuUxw8deMQGaz4kEI8/0u+GGTx30WeLY7kdIpMpCZxcaOSOnK2z5JEs9ILcgb+XywdyYHrJje0NpqXR9ux1IyOiULtA8UdFmT7LIDcnBYXiK1DLcK49CjmJqK8gGTRDgwdt96qBiNoObLj06ELkTCt66B83rTEy2MrlXsgpv4/DPthRMojSPfeHrrchldTliToqvp2ui3lF3IZucSVYZTuf2fvjIxBOqHCuAqAv9lD1xvNyPA3llI8rte8iAry4oGnNHqtVDytF",
+    "x-acbin": "jNnyveSVr43Beaxh@GIWqPT@DuKtCJbTBAn?tLN0k7Rj3v5YWtB1U@?XUro8Xzsv",
+    "rxc": "ABPYjmcKVz3v13CWRkY"
+}
+
+HEADERS = {
+    "user-agent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Mobile Safari/537.36"
+}
+
+# KVDB Helpers
+def kv_set(key, value):
+    requests.post(f"{KVDB_BASE}/{key}", data=json.dumps(value))
+
+def kv_get(key, default=None):
+    r = requests.get(f"{KVDB_BASE}/{key}")
+    return json.loads(r.text) if r.status_code == 200 else default
+
 @app.route("/")
-def home():
-    return "✅ Amazon Shortener API is Live!"
+def index():
+    return "✅ Amazon Shortlink API is Live!"
 
 @app.route("/adduser")
 def add_user():
     secret = request.args.get("secret")
-    if secret != "ayusar@2010":
-        return "❌ Unauthorized", 403
-
     user = request.args.get("user")
-    days = int(request.args.get("days", 99999))
-    if not user:
-        return "❌ Missing user param", 400
-
-    expiry = datetime.utcnow() + timedelta(days=days)
-    users_col.update_one(
-        {"api_key": user},
-        {"$set": {"allowed": True, "usage_count": 0, "expiry": expiry}},
-        upsert=True
-    )
-    return f"✅ User `{user}` added with expiry of {days} days."
+    days = int(request.args.get("days", 30))
+    if secret != ADMIN_PASSWORD:
+        return "❌ Invalid secret"
+    users = kv_get("users", {})
+    users[user] = {"added": int(time.time()), "expiry": int(time.time()) + days * 86400}
+    kv_set("users", users)
+    return f"✅ User '{user}' added for {days} days."
 
 @app.route("/ban")
 def ban_user():
     secret = request.args.get("secret")
-    if secret != "ayusar@2010":
-        return "❌ Unauthorized", 403
     user = request.args.get("user")
-    if not user:
-        return "❌ Missing user", 400
-    users_col.update_one({"api_key": user}, {"$set": {"allowed": False}})
-    return f"❌ User `{user}` has been banned."
+    if secret != ADMIN_PASSWORD:
+        return "❌ Invalid secret"
+    banned = kv_get("banned", [])
+    if user not in banned:
+        banned.append(user)
+        kv_set("banned", banned)
+    return f"⛔ User '{user}' is banned."
 
 @app.route("/unban")
 def unban_user():
     secret = request.args.get("secret")
-    if secret != "ayusar@2010":
-        return "❌ Unauthorized", 403
     user = request.args.get("user")
-    if not user:
-        return "❌ Missing user", 400
-    users_col.update_one({"api_key": user}, {"$set": {"allowed": True}})
-    return f"✅ User `{user}` has been unbanned."
-
-@app.route("/api")
-def shorten_amazon_link():
-    api_key = request.args.get("api")
-    link = request.args.get("link")
-
-    if not api_key or not link:
-        return "❌ Missing 'api' or 'link'", 400
-
-    user = users_col.find_one({"api_key": api_key})
-    if not user:
-        return "❌ API Key not found", 403
-    if not user.get("allowed", False):
-        return "❌ Access Denied", 403
-    if "expiry" in user and datetime.utcnow() > user["expiry"]:
-        return "❌ API expired", 403
-
-    encoded_url = urllib.parse.quote_plus(link)
-    shortener_url = f"https://www.amazon.in/associates/sitestripe/getShortUrl?longUrl={encoded_url}&marketplaceId=44571"
-
-    try:
-        r = requests.get(shortener_url, headers=HEADERS)
-        r.raise_for_status()
-        data = r.json()
-        users_col.update_one({"api_key": api_key}, {"$inc": {"usage_count": 1}})
-        return data.get("shortUrl", "❌ Failed to shorten")
-    except Exception as e:
-        return f"❌ Error: {str(e)}", 500
+    if secret != ADMIN_PASSWORD:
+        return "❌ Invalid secret"
+    banned = kv_get("banned", [])
+    if user in banned:
+        banned.remove(user)
+        kv_set("banned", banned)
+    return f"✅ User '{user}' is unbanned."
 
 @app.route("/stats")
-def view_stats():
+def stats():
     secret = request.args.get("secret")
-    if secret != "ayusar@2010":
-        return "❌ Unauthorized", 403
+    if secret != ADMIN_PASSWORD:
+        return "❌ Invalid secret"
+    return jsonify(kv_get("stats", {}))
 
-    users = list(users_col.find({}, {"_id": 0}))
-    return jsonify(users)
+@app.route("/api")
+def shorten():
+    user = request.args.get("api")
+    long_url = request.args.get("link")
+    if not user or not long_url:
+        return "❌ Missing user or link"
+
+    users = kv_get("users", {})
+    if user not in users:
+        return "❌ Unauthorized user"
+
+    if int(time.time()) > users[user]["expiry"]:
+        return "❌ User expired"
+
+    banned = kv_get("banned", [])
+    if user in banned:
+        return "⛔ User is banned"
+
+    usage = kv_get("stats", {})
+    usage[user] = usage.get(user, 0) + 1
+    kv_set("stats", usage)
+
+    params = {"longUrl": long_url, "marketplaceId": "44571"}
+    response = requests.get(
+        "https://www.amazon.in/associates/sitestripe/getShortUrl",
+        headers=HEADERS, cookies=COOKIES, params=params
+    )
+
+    if response.status_code == 200:
+        return response.json().get("shortUrl", "❌ Could not parse short URL")
+    else:
+        return f"❌ Failed with status code {response.status_code}"
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=7860)
