@@ -245,7 +245,8 @@ def handle_message(update, context):
     if not links:
         return
     if len(links) > 1:
-        await update.message.reply_text("❌ Please send only one link per message.")
+        await
+        update.message.reply_text("❌ Please send only one link per message.")
         return
 
     link = links[0]
