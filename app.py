@@ -41,7 +41,8 @@ def run_web():
     logging.info(f"✅ Health check server running on port {port}")
     server.serve_forever()
 
-    threading.Thread(target=run_web, daemon=True).start()
+# Start the server in a background daemon thread
+threading.Thread(target=run_web, daemon=True).start()
 
 # ---------------- START ----------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
