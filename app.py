@@ -223,9 +223,21 @@ async def addchannel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await send_to_database(context, f"USER {user_id} LINKED CHANNEL {channel_id}")
     await update.message.reply_text("✅ Channel linked successfully!")
 
-# ---------------- CORE LOGIC ----------------
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text
+# ---------------- CORE LOGIC ---------------
+
+# Corrected code
+def handle_message(update, context):
+    if update.message is not None and update.message.text is not None:
+        text = update.message.text
+        # Now you can safely process the text message
+        # rest of your code here
+    else:
+        # This block handles non-text updates, like photos, stickers, or new members.
+        # You can add logic here to respond differently or do nothing.
+        print("Received a non-text update.")
+        # Example: send a friendly message back to the user
+        # update.message.reply_text("I can only process text messages right now. 😅")
+
     user_id = update.effective_user.id
     
     links = [w for w in text.split() if "amzn.to" in w or "flipkart.com" in w]
