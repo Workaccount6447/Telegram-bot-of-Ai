@@ -10,8 +10,7 @@ from telegram.ext import (
 
 import os
 import threading
-from http.server import SimpleHTTPRequestHandler, HTTPServer
-)
+from http.server import SimpleHTTPRequestHandler, HTTPServer)
 
 # ---------------- CONFIG ----------------
 BOT_TOKEN = "8369123404:AAG_pWjtGOub0DBYEDbCE6-wuR3zol_KWNU"
