@@ -7,7 +7,7 @@ from telegram.ext import (
     Application, CommandHandler,
     MessageHandler, filters,
     ContextTypes
-import os
+ import os
 import threading
 from http.server import SimpleHTTPRequestHandler, HTTPServer
 )
