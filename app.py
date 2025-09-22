@@ -1,123 +1,165 @@
-from flask import Flask, request, jsonify
+import logging
 import requests
-import time
-import json
+import urllib.parse
+from datetime import datetime, timedelta
+from telegram import Update
+from telegram.ext import (
+    Application, CommandHandler,
+    MessageHandler, filters,
+    ContextTypes
+)
 
-app = Flask(__name__)
+# ---------------- CONFIG ----------------
+BOT_TOKEN = "8369123404:AAG_pWjtGOub0DBYEDbCE6-wuR3zol_KWNU"
+OWNER_ID = 7588665244
+DATABASE_GROUP_ID = -1002906782286  # group used as database
 
-ADMIN_PASSWORD = "ayusar@2010"
-KVDB_BUCKET = "Rz199m1zbC8oEghG9br7Xx"
+# ---------------- LOGGING ----------------
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO
+)
 
-# Constants
-KVDB_BASE = f"https://kvdb.io/{KVDB_BUCKET}"
+# ---------------- HELPERS ----------------
+def now_ist():
+    """Return current IST datetime."""
+    return datetime.utcnow() + timedelta(hours=5, minutes=30)
 
-COOKIES = {
-    "session-id": "258-2488057-5180660",
-    "i18n-prefs": "INR",
-    "ubid-acbin": "261-4559508-6367401",
-    "lc-acbin": "en_IN",
-    "session-token": "kMYueRXHPOnLSoZbPU8gQGM+ZvH4o3kaUmmvAb6O3Sn9n7kf+Mbp15K7ME9/JeNyElnN15loNHbgrhFim2DX+TnAdBioWkCg95K3A2Z3z18WR2YWw/khe4YHPzh7xq49bxKnEpinxvJtomFlcmXK6w8luI9GJrANgdE+Jfz6fAXEHB9OaFCVZBREfZ4SmiqIFlu0euN8vJiiQvyN7MokLZtMCHgm0jgT/1bKvAg4T+dvC1UWdDgXnyyn3WDrWpJrNEMhw7VkWtQdtyBtqwZm8RW4zeBYXT0ACgQX3w2Gt+TDLfi1qMfzGrc7BrnoTog/IJP0aFl1UNm6r2Sv4/ezfuWuBKYmO0BIzgerV/iXtM/aNtDXKbzWvw==",
-    "x-acbin": "DxeegW?GpvOj5BdJQr8fro?VHaJn0x1s38BwqvcdjnOeWcY1fcM1DR@YSTGDqeIv",
-    "at-acbin": "Atza|IwEBIGrPdsKViIFV3vXk45oZyvSTJgXZwGgTDik1420XqGKf19SUvokB5kD8ZUQJJ3fPeRV2zBgIXbRsZ3mlPYcVEvqZRslymsXtIwr4aER9vxSA4C6ynoJoaOPvsSCefVslWCDjcYXOchzH_j72nupTxiyLyVE8Vuoc49VoXJzHzh0kyK8YPoh7MvqhaKEqANuuowpJpprxJ7X3CbDPlUSe0GK22mczsnJKotQgB886JcJ9bA",
-    "sess-at-acbin": "J1itGQHJEtoSeLrRhPBFaCgs/eaBJjSFj+2ICVOImz4=",
-    "sst-acbin": "Sst1|PQE0lr1Nm8snEKqclCaPO0Z0Ce7N1g8X2W0nk0KZ_6IRHbNnYFiN3dfKeZqfjtP47Fe1XOo_yUL3_lfvqgtmqXabSsO5jAzFQ5hHrjkk_KyFkXc2EceMqVpJcdgV209zWJYwoQ4P0p79fSdCg87ogsgDRsA2esUlWDI2ABdvZzZTincS5VRlusQXWfrsqubSloXR3iHzxhmYBu6QPHtWdQVGFmkecFZOT9kDvBY98ntTZMS04Oo1UluLNcQmxNfYSRn01OvUyG5-_Nj-e-XnB9WI-Zr8EuZxoKujQt8UPseGOo8",
-    "session-id-time": "2082787201l",
-    "rxc": "ALP/Gyk0bPxApKunGK4",
-    "csm-hit": "tb:JXRQ8HRKDHCNJ9HGGRD0+s-JXRQ8HRKDHCNJ9HGGRD0|1755534447174&t:1755534447174&adb:adblk_no"
-}
-    
+async def send_to_database(context: ContextTypes.DEFAULT_TYPE, text: str):
+    """Send info to database group."""
+    await context.bot.send_message(DATABASE_GROUP_ID, text)
 
-HEADERS = {
-    "user-agent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Mobile Safari/537.36"
-}
-
-# KVDB Helpers
-def kv_set(key, value):
-    requests.post(f"{KVDB_BASE}/{key}", data=json.dumps(value))
-
-def kv_get(key, default=None):
-    r = requests.get(f"{KVDB_BASE}/{key}")
-    return json.loads(r.text) if r.status_code == 200 else default
-
-@app.route("/")
-def index():
-    return "✅ Amazon Shortlink API is Live!"
-
-@app.route("/adduser")
-def add_user():
-    secret = request.args.get("secret")
-    user = request.args.get("user")
-    days = int(request.args.get("days", 30))
-    if secret != ADMIN_PASSWORD:
-        return "❌ Invalid secret"
-    users = kv_get("users", {})
-    users[user] = {"added": int(time.time()), "expiry": int(time.time()) + days * 86400}
-    kv_set("users", users)
-    return f"✅ User '{user}' added for {days} days."
-
-@app.route("/ban")
-def ban_user():
-    secret = request.args.get("secret")
-    user = request.args.get("user")
-    if secret != ADMIN_PASSWORD:
-        return "❌ Invalid secret"
-    banned = kv_get("banned", [])
-    if user not in banned:
-        banned.append(user)
-        kv_set("banned", banned)
-    return f"⛔ User '{user}' is banned."
-
-@app.route("/unban")
-def unban_user():
-    secret = request.args.get("secret")
-    user = request.args.get("user")
-    if secret != ADMIN_PASSWORD:
-        return "❌ Invalid secret"
-    banned = kv_get("banned", [])
-    if user in banned:
-        banned.remove(user)
-        kv_set("banned", banned)
-    return f"✅ User '{user}' is unbanned."
-
-@app.route("/stats")
-def stats():
-    secret = request.args.get("secret")
-    if secret != ADMIN_PASSWORD:
-        return "❌ Invalid secret"
-    return jsonify(kv_get("stats", {}))
-
-@app.route("/api")
-def shorten():
-    user = request.args.get("api")
-    long_url = request.args.get("link")
-    if not user or not long_url:
-        return "❌ Missing user or link"
-
-    users = kv_get("users", {})
-    if user not in users:
-        return "❌ Unauthorized user"
-
-    if int(time.time()) > users[user]["expiry"]:
-        return "❌ User expired"
-
-    banned = kv_get("banned", [])
-    if user in banned:
-        return "⛔ User is banned"
-
-    usage = kv_get("stats", {})
-    usage[user] = usage.get(user, 0) + 1
-    kv_set("stats", usage)
-
-    params = {"longUrl": long_url, "marketplaceId": "44571"}
-    response = requests.get(
-        "https://www.amazon.in/associates/sitestripe/getShortUrl",
-        headers=HEADERS, cookies=COOKIES, params=params
+# ---------------- START ----------------
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    await update.message.reply_text(
+        f"👋 Hello {user.first_name}!\n\n"
+        "Send me any Amazon/Flipkart link with text and I’ll fetch product image for you.\n\n"
+        "Use /addchannel <channel_id> to set your posting channel.\n"
+        "Use /redeem <coupon_code> to activate premium."
     )
 
-    if response.status_code == 200:
-        return response.json().get("shortUrl", "❌ Could not parse short URL")
-    else:
-        return f"❌ Failed with status code {response.status_code}"
+# ---------------- COUPON (OWNER) ----------------
+async def coupon(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Owner command to generate coupons."""
+    if update.effective_user.id != OWNER_ID:
+        return
+
+    if len(context.args) != 3:
+        await update.message.reply_text("Usage: /coupon <count> <validity_days> <plan_days>")
+        return
+
+    try:
+        count = int(context.args[0])
+        validity_days = int(context.args[1])
+        plan_days = int(context.args[2])
+    except ValueError:
+        await update.message.reply_text("❌ Invalid arguments.")
+        return
+
+    created_on = now_ist()
+    expiry = created_on + timedelta(days=validity_days)
+
+    for i in range(count):
+        code = f"CPN-{created_on.strftime('%d%m%H%M')}-{i}"
+        msg = (
+            "✅ Coupon Created\n"
+            f"Code: `{code}`\n"
+            f"Created on: {created_on.strftime('%d-%m-%Y %I:%M %p')} IST\n"
+            f"Validity: {validity_days} days\n"
+            f"Expiry: {expiry.strftime('%d-%m-%Y %I:%M %p')} IST\n"
+            f"Plan Duration: {plan_days} days\n"
+            f"Status: Not used"
+        )
+        await send_to_database(context, msg)
+    await update.message.reply_text("✅ Coupons generated & saved in DB group.")
+
+# ---------------- REDEEM ----------------
+async def redeem(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """User applies coupon."""
+    if not context.args:
+        await update.message.reply_text("Usage: /redeem <coupon_code>")
+        return
+    code = context.args[0].strip()
+
+    # In real case: check from DB group if code exists, valid, unused
+    # Here just mock logic
+    created_on = now_ist()
+    validity_days = 7
+    expiry = created_on + timedelta(days=validity_days)
+
+    msg = (
+        "🎉 Congratulations your plan has been activated!\n"
+        f"Name: {update.effective_user.first_name}\n"
+        f"Date of activation: {created_on.strftime('%d-%m-%Y %I:%M %p')} IST\n"
+        f"Validity: {validity_days} days\n"
+        f"Date of expiry: {expiry.strftime('%d-%m-%Y %I:%M %p')} IST"
+    )
+    await update.message.reply_text(msg)
+
+# ---------------- ADD CHANNEL ----------------
+async def addchannel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """User adds channel for posting."""
+    if not context.args:
+        await update.message.reply_text("Usage: /addchannel <channel_id>")
+        return
+    channel_id = context.args[0]
+
+    try:
+        member = await context.bot.get_chat_member(channel_id, update.effective_user.id)
+        if not member or member.status not in ["administrator", "creator"]:
+            await update.message.reply_text(
+                "❌ WE ARE UNABLE TO FIND YOUR CHANNEL KINDLY MAKE ME ADMIN OF YOUR CHANNEL"
+            )
+            return
+    except Exception:
+        await update.message.reply_text("❌ Kindly Recheck the channel id")
+        return
+
+    await send_to_database(context, f"USER {update.effective_user.id} CHANNEL {channel_id}")
+    await update.message.reply_text("✅ Channel linked successfully!")
+
+# ---------------- HANDLE LINKS ----------------
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
+
+    # detect Amazon / Flipkart links
+    links = [w for w in text.split() if "amzn.to" in w or "flipkart.com" in w]
+
+    if len(links) == 0:
+        return
+    if len(links) > 1:
+        await update.message.reply_text("❌ Many links in same message don't fetch images")
+        return
+
+    link = links[0]
+    encoded = urllib.parse.quote(link)
+    api_url = f"https://www.trackmyprice.in/api/getDetails?url={encoded}&refresh=false"
+
+    try:
+        r = requests.get(api_url, timeout=10).json()
+        if "image" not in r or not r["image"]:
+            await update.message.reply_text("❌ Kindly Recheck the product")
+            return
+        image_url = r["image"]
+    except Exception:
+        await update.message.reply_text("⚠️ Error fetching details")
+        return
+
+    # send image with same text
+    await update.message.reply_photo(photo=image_url, caption=text)
+
+# ---------------- MAIN ----------------
+def main():
+    app = Application.builder().token(BOT_TOKEN).build()
+
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("coupon", coupon))
+    app.add_handler(CommandHandler("redeem", redeem))
+    app.add_handler(CommandHandler("addchannel", addchannel))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+
+    app.run_polling()
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=7860)
+    main()
