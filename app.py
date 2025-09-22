@@ -40,6 +40,7 @@ def run_web():
     server = HTTPServer(("0.0.0.0", port), SimpleHTTPRequestHandler)
     logging.info(f"✅ Health check server running on port {port}")
     server.serve_forever()
+
     threading.Thread(target=run_web, daemon=True).start()
 
 # ---------------- START ----------------
