@@ -3,8 +3,7 @@
 import logging
 import re
 import asyncio
-import socket
-from telegram import Update, MessageThreadId
+from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
 # ==========================
@@ -43,7 +42,7 @@ def extract_url(text: str):
     return match.group(0) if match else None
 
 async def fetch_photo_from_url(url: str):
-    # Placeholder function – here you integrate your real fetcher
+    # Placeholder function – replace with real fetch later
     return "https://via.placeholder.com/500x300.png?text=Fetched+Image"
 
 # ==========================
@@ -72,7 +71,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Simulate fetch
     photo_url = await fetch_photo_from_url(url)
 
-    # Reply in thread under user’s message
+    # Reply in thread under user’s message (if group supports it)
     try:
         await update.message.reply_photo(
             photo=photo_url,
