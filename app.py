@@ -1,144 +1,157 @@
 # om ganesha namah
 # Jai shree krishna 
-import logging
 import os
-import random
-import string
-import asyncio
-from datetime import datetime, timedelta
-from io import BytesIO
-
-from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+import re
+import json
+import logging
 import requests
-from pyppeteer import launch
-from flask import Flask
+import threading
+import socket
+from datetime import datetime, timedelta
+from telegram import Update
+from telegram.ext import (
+    ApplicationBuilder, CommandHandler, MessageHandler,
+    ContextTypes, filters
+)
 
-# ---------------- CONFIG ---------------- #
+# ================= CONFIG =================
 BOT_TOKEN = "8369123404:AAG_pWjtGOub0DBYEDbCE6-wuR3zol_KWNU"
 OWNER_ID = 7588665244
 GROUP_ID = -1002906782286
+# ==========================================
 
-# ---------------------------------------- #
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# In-memory storage (synced with group messages)
-coupons = {}
-user_plans = {}
+# "Database" simulated with dicts
+coupons = {}      # coupon -> {plan_days, used}
+user_plans = {}   # user_id -> {expiry, activated_on}
 
-# ---------------- UTILS ---------------- #
-def generate_coupon_code(length=8):
-    return ''.join(random.choices(string.ascii_uppercase + string.digits, k=length))
-
+# ---------------- UTILITIES ----------------
 def now_ist():
     return datetime.utcnow() + timedelta(hours=5, minutes=30)
 
-def is_premium(user_id: int):
-    if user_id in user_plans:
-        return user_plans[user_id] > now_ist()
-    return False
+def encode_url(url: str) -> str:
+    return requests.utils.quote(url, safe="")
 
-# ---------------- BOT HANDLERS ---------------- #
+def fetch_product_image(link: str):
+    """Fetch product image URL from TrackMyPrice API"""
+    api_url = f"https://www.trackmyprice.in/api/getDetails?url={encode_url(link)}&refresh=false"
+    resp = requests.get(api_url, timeout=15)
+    if resp.status_code != 200:
+        return None
+    try:
+        data = resp.json()
+        return data.get("image")
+    except Exception:
+        return None
+
+def run_health_server():
+    """Dummy TCP server for health checks on port 8080"""
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.bind(("0.0.0.0", 8080))
+    server.listen(5)
+    logger.info("Health check server running on port 8080")
+    while True:
+        conn, _ = server.accept()
+        conn.sendall(b"OK")
+        conn.close()
+
+# ---------------- HANDLERS -----------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("👋 Send me a link and I'll capture a screenshot. If you have a coupon, use /redeem <coupon>.")
-
-# Owner: Generate coupons
-async def coupon(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != OWNER_ID:
-        return await update.message.reply_text("❌ You are not allowed.")
-
-    try:
-        count = int(context.args[0])
-        validity_days = int(context.args[1])
-        plan_days = int(context.args[2])
-    except:
-        return await update.message.reply_text("Usage: /coupon <count> <validity_days> <plan_days>")
-
-    coupons_created = []
-    for _ in range(count):
-        code = generate_coupon_code()
-        expiry = now_ist() + timedelta(days=validity_days)
-        coupons[code] = {"expiry": expiry, "plan_days": plan_days, "used": False}
-        coupons_created.append(code)
-
-    msg = f"🎟 Generated {count} coupons (valid {validity_days}d, plan {plan_days}d):\n" + "\n".join(coupons_created)
-    await update.message.reply_text(msg)
-    # log to group
-    await context.bot.send_message(GROUP_ID, f"[COUPON LOG]\n{msg}")
-
-# Redeem coupon
-async def redeem(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args:
-        return await update.message.reply_text("Usage: /redeem <coupon_code>")
-
-    code = context.args[0].strip().upper()
-    if code not in coupons:
-        return await update.message.reply_text("❌ Invalid coupon.")
-    
-    data = coupons[code]
-    if data["used"]:
-        return await update.message.reply_text("❌ Coupon already used.")
-    if now_ist() > data["expiry"]:
-        return await update.message.reply_text("❌ Coupon expired.")
-
-    # Assign premium
-    user_plans[update.effective_user.id] = now_ist() + timedelta(days=data["plan_days"])
-    coupons[code]["used"] = True
-
-    expiry = user_plans[update.effective_user.id].strftime("%Y-%m-%d %H:%M:%S")
-    await update.message.reply_text(f"✅ Coupon redeemed! Premium active until {expiry} (IST)")
-    await context.bot.send_message(GROUP_ID, f"[REDEEM LOG] User {update.effective_user.id} redeemed {code}, valid until {expiry}")
-
-# Screenshot capture
-async def capture_screenshot(url: str):
-    browser = await launch(headless=True, args=["--no-sandbox"])
-    page = await browser.newPage()
-    await page.goto(url, {"waitUntil": "networkidle2"})
-    screenshot = await page.screenshot(fullPage=True)
-    await browser.close()
-    return screenshot
-
-async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    text = update.message.text.strip()
+    if user_id not in user_plans or user_plans[user_id]["expiry"] < now_ist():
+        await update.message.reply_text(
+            "You are not authorised to use this bot.\nSupport - @support"
+        )
+    else:
+        expiry = user_plans[user_id]["expiry"].strftime("%Y-%m-%d %H:%M:%S")
+        await update.message.reply_text(f"Welcome back premium user!\nYour plan expires on {expiry}")
 
-    if not text.startswith("http"):
-        return await update.message.reply_text("❌ Please send a valid link.")
+async def generate_coupons(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != OWNER_ID:
+        return
+    try:
+        num = int(context.args[0])
+        plan_days = int(context.args[1])
+    except:
+        await update.message.reply_text("Usage: /coupon <number> <plan_days>")
+        return
 
-    if not is_premium(user_id):
-        return await update.message.reply_text("🔒 You need premium to use this feature. Redeem with /redeem <coupon>.")
+    import secrets
+    out = []
+    for _ in range(num):
+        cpn = secrets.token_hex(4)
+        coupons[cpn] = {"plan_days": plan_days, "used": False}
+        out.append(cpn)
 
-    await update.message.reply_text("⏳ Fetching screenshot, please wait...")
+    await update.message.reply_text("Generated coupons:\n" + "\n".join(out))
+
+async def add_plan_by_coupon(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.args:
+        await update.message.reply_text("Usage: /addplanbycoupon <coupon>")
+        return
+    cpn = context.args[0]
+    if cpn not in coupons or coupons[cpn]["used"]:
+        await update.message.reply_text("Invalid or already used coupon.")
+        return
+
+    plan_days = coupons[cpn]["plan_days"]
+    coupons[cpn]["used"] = True
+    expiry = now_ist() + timedelta(days=plan_days)
+    user_plans[update.effective_user.id] = {
+        "activated_on": now_ist(),
+        "expiry": expiry,
+    }
+    await update.message.reply_text(
+        f"🎉 Congratulations your plan has been activated!\n"
+        f"Validity: {plan_days} days\n"
+        f"Expiry: {expiry.strftime('%Y-%m-%d %H:%M:%S')}"
+    )
+
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id not in user_plans or user_plans[user_id]["expiry"] < now_ist():
+        await update.message.reply_text("You are not authorised to use this bot.\nSupport - @support")
+        return
+
+    text = update.message.text or ""
+    links = re.findall(r"(https?://\S+)", text)
+
+    if len(links) == 0:
+        return
+    if len(links) > 1:
+        await update.message.reply_text("Many links in same message don't fetch images")
+        return
+
+    link = links[0]
+    await update.message.reply_text("⏳ Fetching product image...")
+
+    img_url = fetch_product_image(link)
+    if not img_url:
+        await update.message.reply_text("Kindly Recheck the product")
+        return
 
     try:
-        screenshot = await capture_screenshot(text)
-        await update.message.reply_photo(photo=BytesIO(screenshot), caption="📸 Screenshot captured!")
-        await context.bot.send_message(GROUP_ID, f"[SCREENSHOT LOG] User {user_id} captured {text}")
+        await update.message.reply_photo(
+            photo=img_url,
+            caption=text
+        )
     except Exception as e:
-        logger.error(e)
-        await update.message.reply_text("❌ Failed to capture screenshot.")
+        await update.message.reply_text(f"Error sending image: {e}")
 
-# ---------------- DUMMY SERVER ---------------- #
-server = Flask(__name__)
-
-@server.route("/")
-def health():
-    return "OK", 200
-
-# ---------------- MAIN ---------------- #
+# ---------------- MAIN ---------------------
 def main():
-    app = Application.builder().token(BOT_TOKEN).build()
+    threading.Thread(target=run_health_server, daemon=True).start()
+
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("coupon", coupon))
-    app.add_handler(CommandHandler("redeem", redeem))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_link))
+    app.add_handler(CommandHandler("coupon", generate_coupons))
+    app.add_handler(CommandHandler("addplanbycoupon", add_plan_by_coupon))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    # Run both bot + server
-    loop = asyncio.get_event_loop()
-    loop.create_task(app.run_polling(poll_interval=30))
-    server.run(host="0.0.0.0", port=8080)
+    app.run_polling(poll_interval=30)
 
 if __name__ == "__main__":
     main()
