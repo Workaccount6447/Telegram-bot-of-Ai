@@ -1,102 +1,87 @@
 # om ganesha namah
 # Jai shree krishna 
 import logging
-import re
-import asyncio
+import requests
+from flask import Flask
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
-# ==========================
-# CONFIG
-# ==========================
+# ---------------------------
+# Config
+# ---------------------------
 BOT_TOKEN = "8369123404:AAG_pWjtGOub0DBYEDbCE6-wuR3zol_KWNU"
 GROUP_ID = -1002906782286
 OWNER_ID = 7588665244
 
-# ==========================
-# LOGGING
-# ==========================
-logging.basicConfig(level=logging.INFO)
+# ---------------------------
+# Logger
+# ---------------------------
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
+)
 logger = logging.getLogger(__name__)
 
-# ==========================
-# HEALTH CHECK DUMMY SERVER
-# ==========================
-async def start_health_server():
-    async def handle_client(reader, writer):
-        writer.write(b"OK\n")
-        await writer.drain()
-        writer.close()
+# ---------------------------
+# Dummy server for health check
+# ---------------------------
+app = Flask(__name__)
 
-    server = await asyncio.start_server(handle_client, "0.0.0.0", 8080)
-    logger.info("Health check server running on port 8080")
-    async with server:
-        await server.serve_forever()
+@app.route("/")
+def home():
+    return "Bot is running", 200
 
-def run_health_server():
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(start_health_server())
-
-# ==========================
-# HELPERS
-# ==========================
-def extract_url(text: str):
-    url_pattern = r"(https?://[^\s]+)"
-    match = re.search(url_pattern, text)
-    return match.group(0) if match else None
-
-async def fetch_photo_from_url(url: str):
-    # Placeholder – later we’ll replace with API call
-    return "https://via.placeholder.com/500x300.png?text=Fetched+Image"
-
-# ==========================
-# HANDLERS
-# ==========================
+# ---------------------------
+# Handlers
+# ---------------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id == OWNER_ID:
-        await update.message.reply_text("✅ Bot is running!")
+    await update.message.reply_text("Send me any link and I will capture its screenshot 📸")
 
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message or not update.message.text:
-        return
-
-    url = extract_url(update.message.text)
-    if not url:
-        return
-
+async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
+    link = update.message.text.strip()
 
-    # Notify user privately
+    if not link.startswith("http"):
+        await update.message.reply_text("❌ Please send a valid link starting with http or https.")
+        return
+
+    # Tell user fetching started
+    await update.message.reply_text("⏳ Fetching screenshot, please wait...")
+
     try:
-        await context.bot.send_message(chat_id=user.id, text="⏳ Fetching photo...")
-    except Exception as e:
-        logger.warning(f"Could not send private message to {user.id}: {e}")
+        # Take screenshot (via thum.io free API demo)
+        screenshot_url = f"https://image.thum.io/get/width/1200/{link}"
 
-    # Simulate fetch
-    photo_url = await fetch_photo_from_url(url)
+        # Send screenshot back
+        await update.message.reply_photo(photo=screenshot_url, caption="✅ Here is your screenshot")
 
-    # Reply in group (thread if topic)
-    try:
-        await update.message.reply_photo(
-            photo=photo_url,
-            caption=f"📸 Here is the preview for:\n{url}",
-            message_thread_id=update.message.message_thread_id if update.message.is_topic_message else None
+        # Log in group (threaded by user)
+        await context.bot.send_message(
+            chat_id=GROUP_ID,
+            text=f"📸 Screenshot fetched for user [{user.first_name}](tg://user?id={user.id})\n🔗 {link}",
+            parse_mode="Markdown"
         )
+
     except Exception as e:
-        logger.error(f"Failed to send photo: {e}")
+        logger.error(f"Error: {e}")
+        await update.message.reply_text("⚠️ Failed to capture screenshot. Try another link.")
 
-# ==========================
-# MAIN
-# ==========================
+# ---------------------------
+# Main
+# ---------------------------
+def main():
+    # Start telegram bot
+    application = Application.builder().token(BOT_TOKEN).build()
+
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_link))
+
+    # Run polling with 30s timeout
+    application.run_polling(poll_interval=30)
+
 if __name__ == "__main__":
-    # Start health check in background thread
     import threading
-    threading.Thread(target=run_health_server, daemon=True).start()
 
-    # Start Telegram bot
-    app = Application.builder().token(BOT_TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
+    # Run dummy Flask server for TCP health checks
+    threading.Thread(target=lambda: app.run(host="0.0.0.0", port=8080), daemon=True).start()
 
-    app.run_polling(poll_interval=30)
+    main()
