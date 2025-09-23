@@ -33,6 +33,11 @@ async def start_health_server():
     async with server:
         await server.serve_forever()
 
+def run_health_server():
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(start_health_server())
+
 # ==========================
 # HELPERS
 # ==========================
@@ -42,7 +47,7 @@ def extract_url(text: str):
     return match.group(0) if match else None
 
 async def fetch_photo_from_url(url: str):
-    # Placeholder function – replace with real fetch later
+    # Placeholder – later we’ll replace with API call
     return "https://via.placeholder.com/500x300.png?text=Fetched+Image"
 
 # ==========================
@@ -71,7 +76,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Simulate fetch
     photo_url = await fetch_photo_from_url(url)
 
-    # Reply in thread under user’s message (if group supports it)
+    # Reply in group (thread if topic)
     try:
         await update.message.reply_photo(
             photo=photo_url,
@@ -84,17 +89,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ==========================
 # MAIN
 # ==========================
-async def main():
-    app = Application.builder().token(BOT_TOKEN).build()
+if __name__ == "__main__":
+    # Start health check in background thread
+    import threading
+    threading.Thread(target=run_health_server, daemon=True).start()
 
+    # Start Telegram bot
+    app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
 
-    # Run both bot and health server
-    await asyncio.gather(
-        app.run_polling(poll_interval=30),
-        start_health_server()
-    )
-
-if __name__ == "__main__":
-    asyncio.run(main())
+    app.run_polling(poll_interval=30)
