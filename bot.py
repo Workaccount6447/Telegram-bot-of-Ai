@@ -7,16 +7,18 @@ import httpx
 import re
 import logging
 import json
+from flask import Flask
+import threading
 
 # -------------------------
-# Config (Insert your own secrets here)
+# Config
 # -------------------------
-BOT_TOKEN = "8416104849:AAEV2neML_bs7L47zuymWHnnv6zWBsbtEd8"
-OWNER_ID = 7588665244
+BOT_TOKEN = os.getenv("BOT_TOKEN", "8416104849:AAEV2neML_bs7L47zuymWHnnv6zWBsbtEd8")
+OWNER_ID = int(os.getenv("OWNER_ID", 7588665244))
 FORCE_CHANNEL = ""  # Leave empty to disable
-DB_GROUP_ID = -1002906782286  # Replace with your database group ID
-
-KVDB_BUCKET = "C9CWKsR6fyceXoYfCGmDBy"
+DB_GROUP_ID = int(os.getenv("DB_GROUP_ID", -1002906782286))   # For storing songs
+LOG_GROUP_ID = int(os.getenv("LOG_GROUP_ID", -1003150807266))  # For raw errors/logs
+KVDB_BUCKET = os.getenv("KVDB_BUCKET", "C9CWKsR6fyceXoYfCGmDBy")
 KVDB_BASE = f"https://kvdb.io/{KVDB_BUCKET}"
 
 bot = telebot.TeleBot(BOT_TOKEN, parse_mode="Markdown")
@@ -90,6 +92,13 @@ def download_song(url):
         "quiet": True,
         "no_warnings": True,
         "outtmpl": "%(title).40s.%(ext)s",
+        "nocheckcertificate": True,
+        "geo_bypass": True,
+        "http_headers": {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                          "AppleWebKit/537.36 (KHTML, like Gecko) "
+                          "Chrome/120.0.0.0 Safari/537.36"
+        }
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=True)
@@ -97,7 +106,7 @@ def download_song(url):
         if filename.endswith((".webm", ".m4a")):
             filename = filename.rsplit(".", 1)[0] + ".m4a"
     song_cache[url] = {'file_path': filename, 'title': info.get("title", "Unknown"), 'duration': info.get("duration", 0)}
-    save_cache_to_kvdb()  # Save after download
+    save_cache_to_kvdb()
     return filename, info.get("title", "Unknown"), info.get("duration", 0)
 
 def check_force_channel(user_id):
@@ -111,39 +120,49 @@ def check_force_channel(user_id):
     except:
         return False
 
+# -------------------------
+# Error handler
+# -------------------------
+def handle_error(chat_id, e):
+    # Send friendly message to user
+    bot.send_message(chat_id, "❌ Something went wrong while processing your request. Please try again later.")
+    # Send raw error to LOG group
+    try:
+        bot.send_message(LOG_GROUP_ID, f"⚠️ Error for chat {chat_id}:\n`{e}`")
+    except Exception as log_err:
+        logging.error(f"Failed to send error to LOG group: {log_err}")
+
+# -------------------------
+# Send song function
+# -------------------------
 def send_song_to_user_and_db(chat_id, song_url, yt_url=None):
-    # Download
-    file_path, title, duration = download_song(song_url)
+    try:
+        file_path, title, duration = download_song(song_url)
+        caption = (
+            f"🎵 Title : {title}\n"
+            f"━━━━━━━━━━━━━━━━━━━\n"
+            f"⏱ Duration : {duration//60}:{duration%60:02d}\n"
+            f"━━━━━━━━━━━━━━━━━━━\n"
+            "Made with love by [Smart Tg Bots](https://t.me/SmartTgBots)"
+        )
+        kb = InlineKeyboardMarkup()
+        if yt_url:
+            kb.add(InlineKeyboardButton("🎵 Listen Now", url=yt_url))
+        kb.add(InlineKeyboardButton("💬 Support", url="https://t.me/Smarttgsupportbot"))
+        kb.add(InlineKeyboardButton("📣 Updates", url="https://t.me/SmartTgBots"))
 
-    # Unified caption
-    caption = (
-        f"🎵 Title : {title}\n"
-        f"━━━━━━━━━━━━━━━━━━━\n"
-        f"⏱ Duration : {duration//60}:{duration%60:02d}\n"
-        f"━━━━━━━━━━━━━━━━━━━\n"
-        "Made with love by [Smart Tg Bots](https://t.me/SmartTgBots)"
-    )
+        with open(file_path, "rb") as audio:
+            db_msg = bot.send_audio(DB_GROUP_ID, audio, caption=caption, reply_markup=kb)
+            song_cache[song_url]['file_id'] = db_msg.audio.file_id
+            song_cache[song_url]['caption'] = caption
+            save_cache_to_kvdb()
 
-    # Inline keyboard
-    kb = InlineKeyboardMarkup()
-    if yt_url:
-        kb.add(InlineKeyboardButton("🎵 Listen Now", url=yt_url))
-    kb.add(InlineKeyboardButton("💬 Support", url="https://t.me/Smarttgsupportbot"))
-    kb.add(InlineKeyboardButton("📣 Updates", url="https://t.me/SmartTgBots"))
+        with open(file_path, "rb") as audio:
+            bot.send_audio(chat_id, audio, title=title, caption=caption, reply_markup=kb)
 
-    # Send to DB group
-    with open(file_path, "rb") as audio:
-        db_msg = bot.send_audio(DB_GROUP_ID, audio, caption=caption, reply_markup=kb)
-        song_cache[song_url]['file_id'] = db_msg.audio.file_id
-        song_cache[song_url]['caption'] = caption
-        save_cache_to_kvdb()
-
-    # Send to user
-    with open(file_path, "rb") as audio:
-        bot.send_audio(chat_id, audio, title=title, caption=caption, reply_markup=kb)
-
-    # Delete local file
-    os.remove(file_path)
+        os.remove(file_path)
+    except Exception as e:
+        handle_error(chat_id, e)
 
 # -------------------------
 # Command Handlers
@@ -190,23 +209,22 @@ def stats(msg):
 @bot.message_handler(func=lambda m: True)
 def handle_message(msg):
     all_chats.add(msg.chat.id)
-    text = msg.text.strip()
-    if not text:
-        return bot.send_message(msg.chat.id, "❌ Please send a valid song name.")
-    if msg.chat.type in ["group", "supergroup"]:
-        if not text.lower().startswith(f"@{bot.get_me().username.lower()}"):
-            return
-        text = text.split(" ", 1)[1] if " " in text else ""
-        if not text:
-            return
-    if not check_force_channel(msg.from_user.id):
-        return bot.send_message(msg.chat.id, f"⚠️ You must join {FORCE_CHANNEL} first!")
-
-    # Searching message
-    searching_msg = bot.send_message(msg.chat.id, "🔍 Searching...")
-    current_messages[msg.chat.id] = [searching_msg.message_id]
-
     try:
+        text = msg.text.strip()
+        if not text:
+            return bot.send_message(msg.chat.id, "❌ Please send a valid song name.")
+        if msg.chat.type in ["group", "supergroup"]:
+            if not text.lower().startswith(f"@{bot.get_me().username.lower()}"):
+                return
+            text = text.split(" ", 1)[1] if " " in text else ""
+            if not text:
+                return
+        if not check_force_channel(msg.from_user.id):
+            return bot.send_message(msg.chat.id, f"⚠️ You must join {FORCE_CHANNEL} first!")
+
+        searching_msg = bot.send_message(msg.chat.id, "🔍 Searching...")
+        current_messages[msg.chat.id] = [searching_msg.message_id]
+
         results = search_songs(text)
         if not results:
             bot.delete_message(msg.chat.id, searching_msg.message_id)
@@ -220,10 +238,14 @@ def handle_message(msg):
         choices_msg = bot.send_message(msg.chat.id, "✅ Choose a song:", reply_markup=kb)
         current_messages[msg.chat.id].append(choices_msg.message_id)
         bot.delete_message(msg.chat.id, searching_msg.message_id)
+
     except Exception as e:
         logging.error(f"Error searching: {e}")
-        bot.send_message(msg.chat.id, f"⚠️ Error: {e}")
+        handle_error(msg.chat.id, e)
 
+# -------------------------
+# Callback Handler
+# ----------------------
 # -------------------------
 # Callback Query Handler
 # -------------------------
@@ -236,8 +258,10 @@ def handle_callback(call):
 
         # Delete previous messages
         for mid in current_messages.get(chat_id, []):
-            try: bot.delete_message(chat_id, mid)
-            except: pass
+            try:
+                bot.delete_message(chat_id, mid)
+            except:
+                pass
         current_messages[chat_id] = []
 
         downloading_msg = bot.send_message(chat_id, f"⬇️ Downloading: {song['title']}...")
@@ -262,9 +286,10 @@ def handle_callback(call):
 
         bot.delete_message(chat_id, downloading_msg.message_id)
         del search_results[chat_id]
+
     except Exception as e:
         logging.error(f"Callback error: {e}")
-        bot.send_message(chat_id, f"❌ Error: {e}")
+        handle_error(chat_id, e)
 
 # -------------------------
 # Load cache & run bot
@@ -276,9 +301,6 @@ bot.infinity_polling()
 # -------------------------
 # Flask keep-alive for Railway
 # -------------------------
-from flask import Flask
-import threading
-
 app = Flask(__name__)
 
 @app.route("/")
