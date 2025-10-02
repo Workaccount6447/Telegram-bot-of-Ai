@@ -117,7 +117,6 @@ def send_song_to_user_and_db(chat_id, song_url, yt_url=None):
 
     # Unified caption
     caption = (
-        f"(Music)\n"
         f"🎵 Title : {title}\n"
         f"━━━━━━━━━━━━━━━━━━━\n"
         f"⏱ Duration : {duration//60}:{duration%60:02d}\n"
