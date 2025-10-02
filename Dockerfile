@@ -1,17 +1,17 @@
-# Use official Python image
+# Use Python image
 FROM python:3.11-slim
 
-# Set working directory
+# Set working dir
 WORKDIR /app
 
-# Copy requirements first (better caching)
-COPY requirements.txt .
+# Install system deps (ffmpeg for yt-dlp)
+RUN apt-get update && apt-get install -y ffmpeg && rm -rf /var/lib/apt/lists/*
 
-# Install dependencies
+# Copy files
+COPY requirements.txt requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy bot code
 COPY . .
 
 # Run the bot
-CMD ["python", "app.py"]
+CMD ["python", "bot.py"]
