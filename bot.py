@@ -11,7 +11,7 @@ import json
 # -------------------------
 # Config (Insert your own secrets here)
 # -------------------------
-BOT_TOKEN = "YOUR_BOT_TOKEN_HERE"
+BOT_TOKEN = "8416104849:AAEV2neML_bs7L47zuymWHnnv6zWBsbtEd8"
 OWNER_ID = 7588665244
 FORCE_CHANNEL = ""  # Leave empty to disable
 DB_GROUP_ID = -1002906782286  # Replace with your database group ID
