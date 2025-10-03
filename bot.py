@@ -1,7 +1,6 @@
 import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 from youtubesearchpython import VideosSearch
-import yt_dlp
 import os
 import httpx
 import re
@@ -86,28 +85,37 @@ def search_songs(query):
 def download_song(url):
     if url in song_cache and 'file_path' in song_cache[url]:
         return song_cache[url]['file_path'], song_cache[url]['title'], song_cache[url]['duration']
-    ydl_opts = {
-        "format": "bestaudio[ext=m4a]/bestaudio/best",
-        "noplaylist": True,
-        "quiet": True,
-        "no_warnings": True,
-        "outtmpl": "%(title).40s.%(ext)s",
-        "nocheckcertificate": True,
-        "geo_bypass": True,
-        "http_headers": {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                          "AppleWebKit/537.36 (KHTML, like Gecko) "
-                          "Chrome/120.0.0.0 Safari/537.36"
-        }
-    }
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(url, download=True)
-        filename = sanitize_filename(ydl.prepare_filename(info))
-        if filename.endswith((".webm", ".m4a")):
-            filename = filename.rsplit(".", 1)[0] + ".m4a"
-    song_cache[url] = {'file_path': filename, 'title': info.get("title", "Unknown"), 'duration': info.get("duration", 0)}
-    save_cache_to_kvdb()
-    return filename, info.get("title", "Unknown"), info.get("duration", 0)
+
+    try:
+        # Convert YouTube URL to Piped API
+        video_id = url.split("v=")[-1]
+        piped_api = f"https://piped.kavin.rocks/api/v1/videos/{video_id}"
+        r = httpx.get(piped_api, timeout=10)
+        r.raise_for_status()
+        data = r.json()
+
+        title = sanitize_filename(data["title"])
+        duration = data.get("length_seconds", 0)
+
+        # Get best audio format URL
+        audio_streams = [f for f in data["streams"] if f["type"].startswith("audio/")]
+        best_audio = max(audio_streams, key=lambda x: x.get("bitrate", 0))
+        audio_url = best_audio["url"]
+
+        # Download audio
+        file_path = f"{title}.m4a"
+        with httpx.stream("GET", audio_url, timeout=60) as stream:
+            with open(file_path, "wb") as f:
+                for chunk in stream.iter_bytes(chunk_size=1024*1024):
+                    f.write(chunk)
+
+        song_cache[url] = {'file_path': file_path, 'title': title, 'duration': duration}
+        save_cache_to_kvdb()
+        return file_path, title, duration
+
+    except Exception as e:
+        logging.error(f"Piped download error: {e}")
+        raise
 
 def check_force_channel(user_id):
     if not FORCE_CHANNEL:
@@ -124,9 +132,7 @@ def check_force_channel(user_id):
 # Error handler
 # -------------------------
 def handle_error(chat_id, e):
-    # Send friendly message to user
     bot.send_message(chat_id, "❌ Something went wrong while processing your request. Please try again later.")
-    # Send raw error to LOG group
     try:
         bot.send_message(LOG_GROUP_ID, f"⚠️ Error for chat {chat_id}:\n`{e}`")
     except Exception as log_err:
@@ -245,9 +251,6 @@ def handle_message(msg):
 
 # -------------------------
 # Callback Handler
-# ----------------------
-# -------------------------
-# Callback Query Handler
 # -------------------------
 @bot.callback_query_handler(func=lambda call: True)
 def handle_callback(call):
