@@ -1,5 +1,4 @@
 import telebot
-from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 from youtubesearchpython import VideosSearch
 import os
 import httpx
@@ -15,8 +14,8 @@ import threading
 BOT_TOKEN = os.getenv("BOT_TOKEN", "8416104849:AAEV2neML_bs7L47zuymWHnnv6zWBsbtEd8")
 OWNER_ID = int(os.getenv("OWNER_ID", 7588665244))
 FORCE_CHANNEL = ""  # Leave empty to disable
-DB_GROUP_ID = int(os.getenv("DB_GROUP_ID", -1002906782286))   # For storing songs
-LOG_GROUP_ID = int(os.getenv("LOG_GROUP_ID", -1003150807266))  # For raw errors/logs
+DB_GROUP_ID = int(os.getenv("DB_GROUP_ID", -1002906782286)   # For storing songs
+LOG_GROUP_ID = int(os.getenv("LOG_GROUP_ID", -1003150807266)  # For raw errors/logs
 KVDB_BUCKET = os.getenv("KVDB_BUCKET", "C9CWKsR6fyceXoYfCGmDBy")
 KVDB_BASE = f"https://kvdb.io/{KVDB_BUCKET}"
 
@@ -25,9 +24,7 @@ bot = telebot.TeleBot(BOT_TOKEN, parse_mode="Markdown")
 # -------------------------
 # Global Data
 # -------------------------
-search_results = {}  # chat_id -> search results
-current_messages = {}  # chat_id -> list of message IDs
-all_chats = set()  # track all users/chats
+all_chats = set()
 song_cache = {}  # url -> {'file_id': ..., 'title': ..., 'duration': ..., 'caption': ...}
 
 # -------------------------
@@ -35,15 +32,6 @@ song_cache = {}  # url -> {'file_id': ..., 'title': ..., 'duration': ..., 'capti
 # -------------------------
 logging.basicConfig(filename="bot_errors.log", level=logging.ERROR,
                     format="%(asctime)s - %(levelname)s - %(message)s")
-
-# -------------------------
-# Monkey-patch httpx to ignore proxies
-# -------------------------
-original_post = httpx.post
-def patched_post(*args, **kwargs):
-    kwargs.pop("proxies", None)
-    return original_post(*args, **kwargs)
-httpx.post = patched_post
 
 # -------------------------
 # KVDB Helpers
@@ -57,7 +45,7 @@ def kvdb_set(key, value):
 def kvdb_get(key):
     try:
         r = httpx.get(f"{KVDB_BASE}/{key}")
-        if r.status_code == 200 and r.text != "":
+        if r.status_code == 200 and r.text.strip():
             return json.loads(r.text)
     except Exception as e:
         logging.error(f"KVDB get error: {e}")
@@ -79,8 +67,10 @@ def sanitize_filename(name):
     return re.sub(r'[\\/*?:"<>|]', "", name)
 
 def search_songs(query):
-    results = VideosSearch(query + " song", limit=5).result()["result"]
-    return [{"title": r["title"], "url": r["link"], "duration": r.get("duration", "N/A")} for r in results]
+    results = VideosSearch(query + " song", limit=1).result()["result"]
+    if not results:
+        return None
+    return {"title": results[0]["title"], "url": results[0]["link"], "duration": results[0].get("duration", "N/A")}
 
 def download_song(url):
     if url in song_cache and 'file_path' in song_cache[url]:
@@ -92,6 +82,10 @@ def download_song(url):
         piped_api = f"https://piped.kavin.rocks/api/v1/videos/{video_id}"
         r = httpx.get(piped_api, timeout=10)
         r.raise_for_status()
+
+        if not r.text.strip():
+            raise ValueError(f"Piped API returned empty response for URL: {url}")
+
         data = r.json()
 
         title = sanitize_filename(data["title"])
@@ -128,9 +122,6 @@ def check_force_channel(user_id):
     except:
         return False
 
-# -------------------------
-# Error handler
-# -------------------------
 def handle_error(chat_id, e):
     bot.send_message(chat_id, "❌ Something went wrong while processing your request. Please try again later.")
     try:
@@ -138,10 +129,7 @@ def handle_error(chat_id, e):
     except Exception as log_err:
         logging.error(f"Failed to send error to LOG group: {log_err}")
 
-# -------------------------
-# Send song function
-# -------------------------
-def send_song_to_user_and_db(chat_id, song_url, yt_url=None):
+def send_song_to_user_and_db(chat_id, song_url):
     try:
         file_path, title, duration = download_song(song_url)
         caption = (
@@ -151,20 +139,15 @@ def send_song_to_user_and_db(chat_id, song_url, yt_url=None):
             f"━━━━━━━━━━━━━━━━━━━\n"
             "Made with love by [Smart Tg Bots](https://t.me/SmartTgBots)"
         )
-        kb = InlineKeyboardMarkup()
-        if yt_url:
-            kb.add(InlineKeyboardButton("🎵 Listen Now", url=yt_url))
-        kb.add(InlineKeyboardButton("💬 Support", url="https://t.me/Smarttgsupportbot"))
-        kb.add(InlineKeyboardButton("📣 Updates", url="https://t.me/SmartTgBots"))
 
         with open(file_path, "rb") as audio:
-            db_msg = bot.send_audio(DB_GROUP_ID, audio, caption=caption, reply_markup=kb)
+            db_msg = bot.send_audio(DB_GROUP_ID, audio, caption=caption)
             song_cache[song_url]['file_id'] = db_msg.audio.file_id
             song_cache[song_url]['caption'] = caption
             save_cache_to_kvdb()
 
         with open(file_path, "rb") as audio:
-            bot.send_audio(chat_id, audio, title=title, caption=caption, reply_markup=kb)
+            bot.send_audio(chat_id, audio, title=title, caption=caption)
 
         os.remove(file_path)
     except Exception as e:
@@ -176,31 +159,12 @@ def send_song_to_user_and_db(chat_id, song_url, yt_url=None):
 @bot.message_handler(commands=["start"])
 def start(msg):
     all_chats.add(msg.chat.id)
-    kb = InlineKeyboardMarkup()
-    kb.add(InlineKeyboardButton("➕ Add Me", url="http://t.me/SongsDownload_Robot?startgroup=true"))
-    kb.add(InlineKeyboardButton("💬 Support", url="http://t.me/Smarttgsupportbot"))
-    kb.add(InlineKeyboardButton("📣 Updates", url="http://t.me/SmartTgBots"))
-    kb.add(InlineKeyboardButton("❓ Help", callback_data="help"))
     bot.send_message(
         msg.chat.id,
         "🎵 I'm a Music Downloader Bot!\n\n"
-        "Send me the name of song you want to download and see the magic.\n"
-        "Example - Hanumankind\n\n"
-        "Use me in groups too by typing:\n"
-        "`@SongsDownload_Robot song name`\n\n"
-        "Made by [Smart Tg Bots](https://t.me/SmartTgBots)",
-        reply_markup=kb
-    )
-
-@bot.message_handler(commands=["help"])
-def help_command(msg):
-    bot.send_message(
-        msg.chat.id,
-        "🎵 **Music Downloader Bot Help**\n\n"
-        "• Send me the name of any song and I will fetch it for you.\n"
-        "• Use inline queries in groups: `@SongsDownload_Robot song name`\n"
-        "• Only the owner can use /stats to see total users.\n"
-        "• Songs you request are cached in the database group for future requests."
+        "Send me the name of the song, and I will fetch it for you automatically.\n"
+        "Example: Hanumankind\n\n"
+        "Made by [Smart Tg Bots](https://t.me/SmartTgBots)"
     )
 
 @bot.message_handler(commands=["stats"])
@@ -210,7 +174,7 @@ def stats(msg):
     bot.send_message(msg.chat.id, f"👥 Total chats/users: {len(all_chats)}")
 
 # -------------------------
-# Message Handler
+# Automatic Song Download Handler
 # -------------------------
 @bot.message_handler(func=lambda m: True)
 def handle_message(msg):
@@ -219,80 +183,24 @@ def handle_message(msg):
         text = msg.text.strip()
         if not text:
             return bot.send_message(msg.chat.id, "❌ Please send a valid song name.")
-        if msg.chat.type in ["group", "supergroup"]:
-            if not text.lower().startswith(f"@{bot.get_me().username.lower()}"):
-                return
-            text = text.split(" ", 1)[1] if " " in text else ""
-            if not text:
-                return
+
         if not check_force_channel(msg.from_user.id):
             return bot.send_message(msg.chat.id, f"⚠️ You must join {FORCE_CHANNEL} first!")
 
-        searching_msg = bot.send_message(msg.chat.id, "🔍 Searching...")
-        current_messages[msg.chat.id] = [searching_msg.message_id]
-
-        results = search_songs(text)
-        if not results:
-            bot.delete_message(msg.chat.id, searching_msg.message_id)
-            return bot.send_message(msg.chat.id, "❌ No results found.")
-        search_results[msg.chat.id] = results
-
-        kb = InlineKeyboardMarkup()
-        for i, r in enumerate(results):
-            kb.add(InlineKeyboardButton(f"{i+1}. {r['title'][:40]} ⏱ {r['duration']}", callback_data=str(i)))
-
-        choices_msg = bot.send_message(msg.chat.id, "✅ Choose a song:", reply_markup=kb)
-        current_messages[msg.chat.id].append(choices_msg.message_id)
+        searching_msg = bot.send_message(msg.chat.id, "🔍 Searching for your song...")
+        song = search_songs(text)
         bot.delete_message(msg.chat.id, searching_msg.message_id)
 
+        if not song:
+            return bot.send_message(msg.chat.id, "❌ No results found.")
+
+        downloading_msg = bot.send_message(msg.chat.id, f"⬇️ Downloading: {song['title']}...")
+        send_song_to_user_and_db(msg.chat.id, song['url'])
+        bot.delete_message(msg.chat.id, downloading_msg.message_id)
+
     except Exception as e:
-        logging.error(f"Error searching: {e}")
+        logging.error(f"Error handling message: {e}")
         handle_error(msg.chat.id, e)
-
-# -------------------------
-# Callback Handler
-# -------------------------
-@bot.callback_query_handler(func=lambda call: True)
-def handle_callback(call):
-    chat_id = call.message.chat.id
-    try:
-        index = int(call.data)
-        song = search_results[chat_id][index]
-
-        # Delete previous messages
-        for mid in current_messages.get(chat_id, []):
-            try:
-                bot.delete_message(chat_id, mid)
-            except:
-                pass
-        current_messages[chat_id] = []
-
-        downloading_msg = bot.send_message(chat_id, f"⬇️ Downloading: {song['title']}...")
-        current_messages[chat_id].append(downloading_msg.message_id)
-
-        # Instant delivery if in cache
-        if song['url'] in song_cache and 'file_id' in song_cache[song['url']]:
-            kb = InlineKeyboardMarkup()
-            if song['url']:
-                kb.add(InlineKeyboardButton("🎵 Listen Now", url=song['url']))
-            kb.add(InlineKeyboardButton("💬 Support", url="https://t.me/Smarttgsupportbot"))
-            kb.add(InlineKeyboardButton("📣 Updates", url="https://t.me/SmartTgBots"))
-
-            bot.send_audio(
-                chat_id,
-                song_cache[song['url']]['file_id'],
-                caption=song_cache[song['url']]['caption'],
-                reply_markup=kb
-            )
-        else:
-            send_song_to_user_and_db(chat_id, song['url'], song['url'])
-
-        bot.delete_message(chat_id, downloading_msg.message_id)
-        del search_results[chat_id]
-
-    except Exception as e:
-        logging.error(f"Callback error: {e}")
-        handle_error(chat_id, e)
 
 # -------------------------
 # Load cache & run bot
@@ -313,6 +221,5 @@ def home():
 def run_flask():
     app.run(host="0.0.0.0", port=8080)
 
-# Start Flask in a separate thread
 flask_thread = threading.Thread(target=run_flask)
 flask_thread.start()
