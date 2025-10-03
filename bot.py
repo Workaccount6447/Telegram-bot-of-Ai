@@ -87,18 +87,19 @@ def download_song(url):
     if url in song_cache and 'file_path' in song_cache[url]:
         return song_cache[url]['file_path'], song_cache[url]['title'], song_cache[url]['duration']
     ydl_opts = {
-        "format": "bestaudio[ext=m4a]/bestaudio/best",
-        "noplaylist": True,
-        "quiet": True,
-        "no_warnings": True,
-        "outtmpl": "%(title).40s.%(ext)s",
-        "nocheckcertificate": True,
-        "geo_bypass": True,
-        "http_headers": {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                          "AppleWebKit/537.36 (KHTML, like Gecko) "
-                          "Chrome/120.0.0.0 Safari/537.36"
-        }
+    "format": "bestaudio[ext=m4a]/bestaudio/best",
+    "noplaylist": True,
+    "quiet": True,
+    "no_warnings": True,
+    "outtmpl": "%(title).40s.%(ext)s",
+    "nocheckcertificate": True,
+    "geo_bypass": True,
+    "cookiefile": "youtube_cookies.txt",  # <-- directly reference the file
+    "http_headers": {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                      "AppleWebKit/537.36 (KHTML, like Gecko) "
+                      "Chrome/120.0.0.0 Safari/537.36"
+    }
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=True)
