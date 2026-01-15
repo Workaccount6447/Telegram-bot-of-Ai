@@ -5,7 +5,7 @@ from datetime import datetime
 # Links to hit
 links = [
     "https://error-t46a.onrender.com/",
-    "chemical-phelia-sgggg-e1634b56.koyeb.app/",
+    "https://chemical-phelia-sgggg-e1634b56.koyeb.app/",
     "https://github.com"
 ]
 
