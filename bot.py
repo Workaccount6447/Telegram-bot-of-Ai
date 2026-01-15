@@ -9,7 +9,7 @@ links = [
     "https://github.com"
 ]
 
-INTERVAL = 60   # 60 seconds
+INTERVAL = 20   # 60 seconds
 TIMEOUT = 4     # 4 seconds
 
 print("Started auto requester...\n")
